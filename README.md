@@ -1,8 +1,8 @@
 # 💎🙌 WallStreetBets impact analysis dashboard
 
-## **Check it out [here](https://kran.ai/wsb)!**
-
 ![type dataset](https://img.shields.io/badge/type-app-orange) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**Check it out [here](https://kran.ai/wsb)!**
 
 ## Organisation
 
