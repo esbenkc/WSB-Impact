@@ -10,6 +10,8 @@ pacman::p_load(tidyverse, ndjson, anytime, tidyquant, wordcloud, tm, wordcloud2,
 range01 <- function(x){
   (x-min(x))/(max(x)-min(x))
 }
+
+citation()
 ```
 ```{r tickers}
 tickers <- c('TSLA', 'AMD', 'SPY', 'AMD', 'SDC','GME','PYPL','NVDA','AMC','LCID','PLTR','CLOV','TLRY','RBLX','NEGG','PTON','FB','RIOT','MARA','CLF','WISH','NIO','SPCE','SNDL','CHPT','AMZN','HOOD','SOFI','HUT','QQQ','BB')
@@ -389,6 +391,24 @@ ticker_mat %>%
     order = 'AOE',
     mar = c(0,0,0,0)
   )
+```
+
+```{r getting reddit data}
+pacman::p_load(jsonlite)
+
+# wsb_io <- map_df(305:285,function(x) jsonlite::fromJSON(paste0("https://api.pushshift.io/reddit/comment/search?after=",x,"d&before=280d&subreddit=wallstreetbets&size=500")))
+
+df <- wsb_io %>%
+  mutate(data = as_tibble(data)) %>% 
+  as.list
+
+df$data %>% 
+  as_tibble %>% 
+  select(subreddit, score, retrieved_on, permalink, is_submitter, id, created_utc, title=body, author) %>% 
+  write_csv("wsb_io.csv")
+
+df <- read_csv("wsb_io.csv")
+df
 ```
 
 
