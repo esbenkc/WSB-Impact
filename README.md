@@ -1,6 +1,8 @@
 # 💎🙌 WallStreetBets impact analysis dashboard for early 2021
 
-> Check it out [here](https://kran.ai/wsb)!
+![type dataset](https://img.shields.io/badge/type-app-orange)
+
+**Check it out [here](https://kran.ai/wsb)!**
 
 ## Organisation
 
