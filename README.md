@@ -1,10 +1,14 @@
 # 💎🙌 WallStreetBets impact analysis dashboard
 
-![type dataset](https://img.shields.io/badge/type-app-orange) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![type dataset](https://img.shields.io/badge/type-app-topaz) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Check it out [here](https://kran.ai/wsb)!**
 
-## Organisation
+## Structure
+
+- [data](https://github.com/esbenkc/WSB-Impact/tree/main/data): Contains all the data used in the project
+- [docs](https://github.com/esbenkc/WSB-Impact/tree/main/docs): Contains all the code used in the project
+- [display.pdf](https://github.com/esbenkc/WSB-Impact/blob/main/display.pdf): A short presentation of the project
 
 ## Context
 
