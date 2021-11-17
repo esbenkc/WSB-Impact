@@ -1,0 +1,54 @@
+---
+title: "WallStreetBets"
+output: html_document
+---
+
+Esben Kran
+
+## Presentation
+
+An explorative data visualization of different aspects of the [WallStreetBets subforum on Reddit](https://reddit.com/r/wallstreetbets) and its interaction with the stock market value of an array of stocks.
+
+```{r Read data, echo=FALSE, message=FALSE, warning=FALSE}
+pacman::p_load(plotly, tidyverse)
+ticker_df <- read_csv("ticker_df.csv")
+```
+
+## The market close value of the stock
+
+The value of the selected stock on market close by day.
+
+```{r close, echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.width=8}
+ticker_df %>% 
+  filter(date > "2021-01-01") %>%
+  group_by(ticker) %>%
+  mutate(ticker=as.factor(ticker)) %>% 
+  plot_ly(x=~date, y=~close, type="scatter", mode="lines", color=~ticker, visible="legendonly")
+
+```
+
+## Proportion of forum posts containing the symbol
+
+The proportion of forum posts that contain the symbol in either uppercase or lowercase.
+
+```{r prop, echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.width=8}
+ticker_df %>% 
+  filter(date > "2021-01-01") %>%
+  group_by(ticker) %>%
+  mutate(ticker=as.factor(ticker)) %>% 
+  plot_ly(x=~date, y=~prop, type="scatter", mode="lines", color=~ticker, visible="legendonly")
+
+```
+
+## The sentiment of all posts regarding this symbol
+
+The sentiment calculated by VADER for the selected stock per day.
+
+```{r sentiment, echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.width=8}
+ticker_df %>% 
+  filter(date > "2021-01-01") %>%
+  group_by(ticker) %>%
+  mutate(ticker=as.factor(ticker)) %>% 
+  plot_ly(x=~date, y=~sentiment, type="scatter", mode="lines", color=~ticker, visible="legendonly")
+
+```

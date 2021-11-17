@@ -1,0 +1,469 @@
+---
+author: "Esben Kran"
+date: "2021-11-02"
+---
+
+```{r packages loading}
+pacman::p_load(tidyverse, ndjson, anytime, tidyquant, wordcloud, tm, wordcloud2, patchwork, tidyquant, bcp)
+```
+```{r range01 function}
+range01 <- function(x){
+  (x-min(x))/(max(x)-min(x))
+}
+```
+```{r tickers}
+tickers <- c('TSLA', 'AMD', 'SPY', 'AMD', 'SDC','GME','PYPL','NVDA','AMC','LCID','PLTR','CLOV','TLRY','RBLX','NEGG','PTON','FB','RIOT','MARA','CLF','WISH','NIO','SPCE','SNDL','CHPT','AMZN','HOOD','SOFI','HUT','QQQ','BB')
+```
+```{r market prices generation}
+market <- tq_get(tickers,
+                 from = "2020-09-29",
+                 to = "2021-08-18",
+                 get = "stock.prices")
+
+pacman::p_load(timetk)
+
+market %>% 
+  group_by(symbol) %>% 
+  pad_by_time() %>% 
+  fill(open, high, low, close, adjusted) %>% 
+  write_csv("market_prices.csv")
+
+```
+```{r wallstreetbets_big}
+pacman::p_load(ndjson)
+
+wsb <- ndjson::stream_in("wallstreetbets_big.ndjson")
+# wsb$title
+# wsb$created_utc
+# wsb$author
+# wsb$num_comments
+# wsb$selftext
+
+df <- tibble(
+  title=wsb$title,
+  date=wsb$created_utc,
+  author=wsb$author,
+  num_comments=wsb$num_comments,
+  text=wsb$selftext
+)
+
+df %>% write_csv("wallstreetbets_big.csv")
+
+```
+```{r wallstreetbets}
+wsb <- ndjson::stream_in("wallstreetbets.ndjson")
+# wsb$title
+# wsb$created_utc
+# wsb$author
+# wsb$num_comments
+# wsb$selftext
+
+df <- tibble(
+  title=wsb$title,
+  date=wsb$created_utc,
+  author=wsb$author,
+  num_comments=wsb$num_comments,
+  text=wsb$selftext
+)
+df %>% 
+  mutate(
+    date = anytime::anydate(date)
+  ) %>% 
+  group_by(date) %>% 
+  summarise(
+    n()
+  )
+
+df %>% write_csv("wallstreetbets.csv")
+```
+```{r inspecting wallstreets_big}
+
+df %>% 
+  mutate(
+    contains_gme=str_detect(paste(title, text), "gme|GME"),
+    date=anytime::anydate(date)
+  ) %>% 
+  group_by(date) %>% 
+  summarise(
+    prop = sum(contains_gme)/n()
+  ) %>% 
+  ggplot() +
+  aes(date, prop) +
+  geom_area() +
+  coord_cartesian(ylim=c(0,1), expand=F) +
+  theme_minimal()
+
+```
+```{r loading wsb data}
+# Ignore GME but go to all the others
+wsb <- read_csv("reddit_wsb.csv") %>% 
+  mutate(created=anytime::anydate(created))
+market <- read_csv("market_prices.csv")
+
+market %>% 
+  group_by(symbol) %>% 
+  mutate(
+    close = range01(close)
+  ) %>% 
+  ggplot() +
+  aes(date, close) +
+  geom_line(aes(color=symbol)) +
+  geom_smooth(se=F) +
+  theme_minimal() +
+  coord_cartesian(ylim=c(0,1))
+
+```
+```{r creating the gme daily dataframe}
+market <- read_csv("market_prices.csv")
+
+gme <- wsb %>% 
+  mutate(title_body = paste(title, body),
+         gme_count = str_detect(title_body, "GME|gme")) %>% 
+  group_by(created) %>%
+  summarise(date = min(created),
+            gme_count = sum(gme_count),
+            n_posts = n(),
+            gme_prop = gme_count / n_posts) %>%
+  left_join(market %>% filter(symbol=="GME")) %>% 
+  mutate(symbol = "GME",
+         close = if_else(is.na(close),
+                        lag(close),
+                        close)) %>% 
+  drop_na() %>% 
+  mutate(close_scale = range01(close)) %>% 
+  filter(gme_count > 0) %>% 
+  select(date, gme_count, close, close_scale, gme_prop, n_posts)
+
+gme %>% 
+  pivot_longer(cols=c(gme_prop, close_scale)) %>% 
+  ggplot() +
+  aes(date, value, color=name, fill=name) +
+  geom_line() + 
+  theme_minimal()
+
+```
+```{r add bayesian change points gme}
+pacman::p_load(bcp, rstan, Rcpp, rstantools)
+
+gme_count <- gme %>% 
+  select(gme_prop) %>% 
+  mutate(gme_prop = as.numeric(gme_prop)) %>% 
+  as.list()
+gme_count <- gme_count[[1]]
+
+gme_stock <- gme %>% 
+  select(close_scale) %>% 
+  mutate(close_scale = as.numeric(close_scale)) %>% 
+  as.list()
+gme_stock <- gme_stock[[1]]
+
+par(mfrow=c(2,1))
+
+bco1 <- bcp(gme_stock, return.mcmc=T)
+bco2 <- bcp(gme_count, return.mcmc=T)
+
+gme <- gme %>% 
+  mutate(
+    stock_post=bco1$posterior.prob,
+    count_post=bco2$posterior.prob,
+    count_above=if_else(count_post>0.8,
+                        T,
+                        F),
+    stock_above=if_else(stock_post>0.8,
+                        T,
+                        F)
+  )
+
+bco1 %>% plot
+bco2 %>% plot
+
+```
+```{r plotting change points gme}
+gme %>%
+  pivot_longer(cols=c(gme_prop, close_scale)) %>% 
+  ggplot() +
+  aes(date, value, color=name, fill=name, xintercept=date) +
+  geom_vline(xintercept=as.list(drop_na(gme[gme$count_above==T,"date"]))[[1]], color="lightblue") +
+  geom_vline(xintercept=as.list(drop_na(gme[gme$stock_above==T,"date"]))[[1]], color="red", alpha=0.5) +
+  geom_line() +
+  coord_cartesian(expand=F, ylim=c(0,1)) +
+  theme_minimal()
+
+```
+```{r creating general ticker markers}
+
+pacman::p_load(vader, dplyr, purrr)
+
+wsb <- wsb %>% 
+  mutate(title_body = paste(title, body))
+
+market <- read_csv("market_prices.csv")
+wsb <- read_csv("reddit_wsb_add_sentiment.csv")
+
+ticker_df <- map_df(tickers, function(x) {
+  df <- wsb %>% 
+    mutate(
+      contains = str_detect(title_body, paste0(x,"|", str_to_lower(x))),
+      sentiment = if_else(contains, sentiment, NA_real_)
+    ) %>% 
+    group_by(created) %>% 
+    summarise(
+      date = anytime::anydate(min(created)),
+      ticker = x,
+      count = sum(contains),
+      n_posts = n(),
+      prop = count / n_posts,
+      sentiment = mean(sentiment, na.rm=T)
+    ) %>%  
+    left_join(market %>% filter(symbol==x)) %>% 
+    select(date, ticker, count, close, sentiment, prop, n_posts)
+  
+  df <- df %>% 
+    mutate(
+      stock_post=bcp(close, return.mcmc=T)$posterior.prob,
+      count_post=bcp(prop, return.mcmc=T)$posterior.prob,
+      sentiment_post=bcp(sentiment, return.mcmc=T)$posterior.prob,
+      count_above=if_else(count_post>0.8,
+                          T,
+                          F),
+      stock_above=if_else(stock_post>0.8,
+                          T,
+                          F),
+      sentiment_above=if_else(sentiment_post>0.8,
+                          T,
+                          F)
+    )
+  
+  df
+})
+
+ticker_df %>% write_csv("ticker_df.csv")
+ticker_df %>% 
+  mutate(
+    week = lubridate::week(date)
+  ) %>% 
+  group_by(ticker, week) %>% 
+  summarise(
+    sentiment = mean(sentiment, na.rm=T),
+    count = sum(count),
+    prop = count / sum(n_posts),
+    stock = mean(close)
+  ) %>% write_csv("ticker_df_week.csv")
+
+```
+
+```{r correlations, fig.width=4, fig.height=4}
+
+week_df <- read_csv("ticker_df_week.csv")
+
+col <- colorRampPalette(c("#2980b9", "#3498db", "#ecf0f1", "#e74c3c", "#c0392b"))
+
+week_df %>% 
+  select(Week=week, Sentiment=sentiment, Count=count, Prop=prop, Stock=stock) %>%
+  # mutate(lead(stock)) %>% 
+  drop_na %>% 
+  as.matrix %>% 
+  cor %>% 
+  corrplot::corrplot(
+    method = "color",
+    addCoef.col = "black",
+    type = "upper",
+    tl.col = "black",
+    tl.srt = 45,
+    col = col(200),
+    diag = FALSE
+  )
+
+```
+
+```{r decaying variable in ticker_df, fig.width=6, fig.height=3}
+ticker_df <- read_csv("ticker_df.csv")
+decay_rate = 0.9
+fill_in <- function(prev, new, growth = -0.1) {
+  if_else(is.na(new), 0, prev * (1 + growth))
+}
+
+ticker_mat <- ticker_df %>%
+  mutate(
+    count_decay = if_else(count_above, 1, 0),
+    count_decay = accumulate(count_decay, fill_in)
+  ) %>%
+  select(
+    `Change point` = count_decay,
+    Sentiment = sentiment,
+    Count = count,
+    Prop = prop,
+    Stock = close
+  ) %>%
+  drop_na %>%
+  as.matrix
+
+
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+# matrix of the p-value of the correlation
+p.mat <- cor.mtest(ticker_mat)
+
+panel.shadeNtext <- function (x, y, corr = NULL, col.regions, ...) 
+{
+  corr <- cor(x, y, use = "pair")
+  results <- cor.test(x, y, alternative = "two.sided")
+  est <- results$p.value
+  stars <- ifelse(est < 5e-4, "***", 
+                  ifelse(est < 5e-3, "**", 
+                         ifelse(est < 5e-2, "*", "")))
+  ncol <- 14
+  pal <- col.regions(ncol)
+  col.ind <- as.numeric(cut(corr, breaks = seq(from = -1, to = 1, 
+                                               length = ncol + 1), include.lowest = TRUE))
+  usr <- par("usr")
+  rect(usr[1], usr[3], usr[2], usr[4], col = pal[col.ind], 
+       border = NA)
+  box(col = "lightgray")
+  on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r <- formatC(corr, digits = 2, format = "f")
+  cex.cor <- .8/strwidth("-X.xx")
+  fonts <- ifelse(stars != "", 2,1)
+  # option 1: stars:
+  text(0.5, 0.4, paste0(r,"\n", stars), cex = cex.cor)
+  # option 2: bolding:
+  #text(0.5, 0.5, r, cex = cex.cor, font=fonts)
+}
+
+par(mfrow=c(1,2))
+
+ticker_mat %>% 
+  cor %>%
+  corrplot::corrplot(
+    method = "color",
+    addCoef.col = "black",
+    type = "upper",
+    tl.col = "black",
+    tl.srt = 70,
+    col = col(200),
+    diag = FALSE,
+    # p.mat = p.mat,
+    tl.pos = "tl",
+    tl.offset = 0.5,
+    # insig = "label_sig",
+    cl.align.text = "l",
+    sig.level = c(0.001, 0.01, 0.05),
+    pch.cex = 0.9,
+    order = 'AOE',
+    cl.pos = "n",
+    mar = c(0,0,0,0)
+  )
+
+ticker_mat %>% 
+  cor %>%
+  corrplot::corrplot(
+    method = "color",
+    # addCoef.col = "black",
+    type = "upper",
+    tl.col = "black",
+    tl.srt = 70,
+    col = col(200),
+    diag = FALSE,
+    p.mat = p.mat,
+    cl.pos = "n",
+    tl.pos = "tl",
+    tl.offset = 0.5,
+    insig = "label_sig",
+    sig.level = c(0.0001, 0.001),
+    cl.align.text = "l",
+    # sig.level = c(0.001, 0.01, 0.05),
+    # pch.cex = 0.9,
+    order = 'AOE',
+    mar = c(0,0,0,0)
+  )
+```
+
+
+```{r investigating ticker_df}
+ticker_df %>%
+  filter(date > "2021-01-01") %>%
+  ggplot() +
+  aes(date, prop, color=ticker) +
+  scale_y_continuous(
+    name = "Neat",
+    sec.axis = sec_axis( trans=~.*1000, name="Second Axis")
+  ) +
+  geom_line() +
+  geom_line(aes(y=close/1000)) +
+  theme_minimal() +
+  coord_cartesian(expand=F, ylim=c(0,1))
+```
+```{r plotly}
+pacman::p_load(plotly, tidyverse)
+ticker_df <- read_csv("ticker_df.csv")
+ticker_df %>% 
+  filter(date > "2021-01-01") %>%
+  group_by(ticker) %>%
+  mutate(close=range01(close)) %>% 
+  mutate(ticker=as.factor(ticker)) %>% 
+  plot_ly(x=~date, y=~close, type="scatter", mode="lines", color=~ticker, visible="legendonly")
+
+```
+
+
+```{r random shit}
+wsb <- read_csv("reddit_wsb.csv") %>% 
+  mutate(sub = "wsb") %>% 
+  select(c(sub, title, score, id, url, created, comms_num))
+dib <- read_csv("r_dataisbeautiful_posts.csv") %>% 
+  mutate(sub = "dib") %>% 
+  select(c(sub, title, score, id, url = full_link, created = created_utc, comms_num = num_comments))
+
+data <- head(wsb, 200) %>%
+  rbind(head(dib, 500))
+
+```
+```{r generate term frequency matrix}
+GenerateMatrix <- function(data) {
+  text <- data$title
+  docs <- Corpus(VectorSource(text))
+  docs <- docs %>%
+    tm_map(removeNumbers) %>%
+    tm_map(removePunctuation) %>%
+    tm_map(stripWhitespace) %>%
+    tm_map(content_transformer(tolower)) %>%
+    tm_map(removeWords, stopwords("english"))
+  
+  dtm <- TermDocumentMatrix(docs)
+  matrix <- as.matrix(dtm)
+  words <- sort(rowSums(matrix), decreasing = TRUE)
+  df <- data.frame(word = names(words), freq = words)
+  df
+}
+```
+```{r generate wordcloud}
+set.seed(1234) # for reproducibility 
+
+df <- GenerateMatrix(data)
+wordcloud(
+  words = df$word,
+  freq = df$freq,
+  min.freq = 1,
+  max.words = 200,
+  random.order = FALSE,
+  rot.per = 0.35,
+  colors = brewer.pal(8, "Dark2")
+)
+```
+```{r create two different wordclouds for each subreddit}
+p1 <- wordcloud2(data=GenerateMatrix(data %>% filter(sub=="dib")), size=1.6, color='random-dark')
+p2 <- wordcloud2(data=GenerateMatrix(data %>% filter(sub=="wsb")), size=1.6, color='random-dark')
+```
